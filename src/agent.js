@@ -2,6 +2,7 @@ const { getFootballMatches } = require("./football");
 const { getBasketballMatches } = require("./basketball");
 const { analyzeWithClaude } = require("./claude");
 const { sendTelegramMessage } = require("./telegram");
+const { enrichPicksWithRealOdds } = require("./odds");
 
 async function runBettingAgent() {
   console.log("📊 Fetching match data...");
@@ -48,8 +49,11 @@ const picks = await analyzeWithClaude(allMatches);
     return;
   }
 
-  const comboOdds = picks.reduce((acc, p) => acc * parseFloat(p.odds), 1);
-  if (comboOdds < 2.80 || comboOdds > 4.80) {
+ const enrichedPicks = await enrichPicksWithRealOdds(picks);
+  const validPicks = enrichedPicks.filter(p => p.odds && !isNaN(p.odds));
+
+  const comboOdds = validPicks.reduce((acc, p) => acc * parseFloat(p.odds), 1);
+  if (validPicks.length < 2 || comboOdds < 2.00 || comboOdds > 6.00) {
     console.log(`⚠️ Combo odds ${comboOdds.toFixed(2)} outside acceptable range. Skipping.`);
     await sendTelegramMessage(
       `⚠️ Picks found but combo odds (${comboOdds.toFixed(2)}) outside target range. Skipping this run.`
@@ -61,7 +65,7 @@ const picks = await analyzeWithClaude(allMatches);
   console.log("✅ Picks sent to Telegram!");
 }
 
-function formatTelegramMessage(picks) {
+function formatTelegramMessage(validPicks) {
   const now = new Date().toLocaleString("en-GB", {
     timeZone: "Africa/Lagos",
     dateStyle: "medium",
