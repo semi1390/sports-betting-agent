@@ -5,18 +5,14 @@ const { startCommandListener } = require("./src/telegram");
 
 console.log("🤖 Sports Betting Agent starting...");
 
-// Run 3x daily: 7am, 1pm, 7pm UTC (8am, 2pm, 8pm Lagos)
-const schedule = ["0 7 * * *", "0 13 * * *", "0 19 * * *"];
-
-schedule.forEach((time) => {
-  cron.schedule(time, async () => {
-    console.log(`\n⏰ Scheduled run at ${new Date().toISOString()}`);
-    try {
-      await runBettingAgent();
-    } catch (err) {
-      console.error("❌ Agent run failed:", err.message);
-    }
-  });
+// Run once daily at 7am UTC (8am Lagos time)
+cron.schedule("0 7 * * *", async () => {
+  console.log(`\n⏰ Daily run at ${new Date().toISOString()}`);
+  try {
+    await runBettingAgent();
+  } catch (err) {
+    console.error("❌ Agent run failed:", err.message);
+  }
 });
 
 // Listen for /run and /status commands from Telegram
@@ -35,4 +31,4 @@ if (process.env.RUN_ON_STARTUP === "true") {
   );
 }
 
-console.log("✅ Scheduler active. Waiting for next run...");
+console.log("✅ Scheduler active — daily run at 8am Lagos time.");
