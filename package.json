@@ -1,0 +1,22 @@
+{
+  "name": "sports-betting-agent",
+  "version": "1.0.0",
+  "description": "AI-powered sports betting picks agent for football and basketball",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test:telegram": "node scripts/test-telegram.js",
+    "test:football": "node scripts/test-football.js",
+    "test:basketball": "node scripts/test-basketball.js",
+    "test:run": "RUN_ON_STARTUP=true node index.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.27.0",
+    "axios": "^1.7.2",
+    "dotenv": "^16.4.5",
+    "node-cron": "^3.0.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
