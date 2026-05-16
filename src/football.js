@@ -15,15 +15,12 @@ const LEAGUE_IDS = [39, 140, 135, 78, 61, 2, 3];
 async function getFootballMatches() {
   if (!API_KEY) throw new Error("API_FOOTBALL_KEY not set");
 
-  const today = new Date().toISOString().split("T")[0];
-  const tomorrow = new Date(Date.now() + 86400000).toISOString().split("T")[0];
+  const dates = [0, 1, 2].map(d =>
+    new Date(Date.now() + d * 86400000).toISOString().split("T")[0]
+  );
 
-  const [todayFixtures, tomorrowFixtures] = await Promise.all([
-    fetchFixtures(today),
-    fetchFixtures(tomorrow),
-  ]);
-
-  const allFixtures = [...todayFixtures, ...tomorrowFixtures];
+  const allFixturesRaw = await Promise.all(dates.map(fetchFixtures));
+  const allFixtures = allFixturesRaw.flat();
   const filtered = allFixtures.filter((f) => LEAGUE_IDS.includes(f.league.id));
 
   if (filtered.length === 0) return [];

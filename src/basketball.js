@@ -14,15 +14,12 @@ const LEAGUE_IDS = [12, 120, 117];
 async function getBasketballMatches() {
   if (!API_KEY) throw new Error("API_FOOTBALL_KEY not set");
 
-  const today = new Date().toISOString().split("T")[0];
-  const tomorrow = new Date(Date.now() + 86400000).toISOString().split("T")[0];
+  const dates = [0, 1, 2].map(d =>
+    new Date(Date.now() + d * 86400000).toISOString().split("T")[0]
+  );
 
-  const [todayGames, tomorrowGames] = await Promise.all([
-    fetchGames(today),
-    fetchGames(tomorrow),
-  ]);
-
-  const allGames = [...todayGames, ...tomorrowGames];
+  const allGamesRaw = await Promise.all(dates.map(fetchGames));
+  const allGames = allGamesRaw.flat();
 
   // Filter to our target leagues only
  
