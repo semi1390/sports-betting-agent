@@ -56,6 +56,29 @@ function preFilterMatches(matches) {
   });
 }
 
+function extractJSON(text) {
+  // Strategy 1: find outermost { } using index positions
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start !== -1 && end !== -1 && end > start) {
+    return text.slice(start, end + 1);
+  }
+
+  // Strategy 2: strip markdown and try again
+  const stripped = text
+    .replace(/```json\n?/gi, "")
+    .replace(/```\n?/gi, "")
+    .trim();
+
+  const start2 = stripped.indexOf("{");
+  const end2 = stripped.lastIndexOf("}");
+  if (start2 !== -1 && end2 !== -1 && end2 > start2) {
+    return stripped.slice(start2, end2 + 1);
+  }
+
+  return text;
+}
+
 async function analyzeWithClaude(matches) {
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error("ANTHROPIC_API_KEY not set");
@@ -105,19 +128,7 @@ ${matchData}
     });
 
     const text = response.content[0].text.trim();
-
-    // Robustly extract JSON — works whether Claude wraps in markdown or not
-    let cleaned;
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      cleaned = jsonMatch[0];
-    } else {
-      cleaned = text
-        .replace(/```json\n?/gi, "")
-        .replace(/```\n?/gi, "")
-        .trim();
-    }
-
+    const cleaned = extractJSON(text);
     const parsed = JSON.parse(cleaned);
 
     if (parsed.analysis_note) {
