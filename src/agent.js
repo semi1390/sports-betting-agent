@@ -14,53 +14,50 @@ async function runBettingAgent() {
 
   const allMatches = [
     ...(footballMatches.status === "fulfilled" ? footballMatches.value : []),
-    ...(basketballMatches.status === "fulfilled"
-      ? basketballMatches.value
-      : []),
+    ...(basketballMatches.status === "fulfilled" ? basketballMatches.value : []),
   ];
 
   if (footballMatches.status === "rejected") {
     console.error("⚠️  Football API error:", footballMatches.reason.message);
   }
   if (basketballMatches.status === "rejected") {
-    console.error(
-      "⚠️  Basketball API error:",
-      basketballMatches.reason.message
-    );
+    console.error("⚠️  Basketball API error:", basketballMatches.reason.message);
   }
 
   if (allMatches.length === 0) {
     console.log("😴 No matches available right now. Skipping.");
-    await sendTelegramMessage(
-      "😴 No matches found for analysis right now. Will check again later."
-    );
+    await sendTelegramMessage("😴 No matches found for analysis right now. Will check again later.");
     return;
   }
 
   console.log(`✅ Got ${allMatches.length} matches. Sending to Claude AI...`);
 
-const picks = await analyzeWithClaude(allMatches);
+  const picks = await analyzeWithClaude(allMatches);
 
   if (!picks || picks.length === 0) {
     console.log("🤔 Claude found no value bets this round.");
-    await sendTelegramMessage(
-      "🔍 Analyzed today's matches — no strong value bets found. Staying disciplined!"
-    );
+    await sendTelegramMessage("🔍 Analyzed today's matches — no strong value bets found. Staying disciplined!");
     return;
   }
 
- const enrichedPicks = await enrichPicksWithRealOdds(picks);
+  const enrichedPicks = await enrichPicksWithRealOdds(picks);
   const validPicks = enrichedPicks.filter(p => p.odds && !isNaN(p.odds));
 
-  const comboOdds = validPicks.reduce((acc, p) => acc * parseFloat(p.odds), 1);
-  if (validPicks.length < 2 || comboOdds < 2.00 || comboOdds > 6.00) {
-    console.log(`⚠️ Combo odds ${comboOdds.toFixed(2)} outside acceptable range. Skipping.`);
-    await sendTelegramMessage(
-      `⚠️ Picks found but combo odds (${comboOdds.toFixed(2)}) outside target range. Skipping this run.`
-    );
+  if (validPicks.length === 0) {
+    console.log("⚠️ No picks with valid odds after enrichment.");
+    await sendTelegramMessage("🔍 Picks found but could not match real odds. Skipping this run.");
     return;
   }
-  const message = formatTelegramMessage(picks);
+
+  const comboOdds = validPicks.reduce((acc, p) => acc * parseFloat(p.odds), 1);
+
+  if (validPicks.length < 2 || comboOdds < 2.00 || comboOdds > 6.00) {
+    console.log(`⚠️ Combo odds ${comboOdds.toFixed(2)} outside acceptable range. Skipping.`);
+    await sendTelegramMessage(`⚠️ Picks found but combo odds (${comboOdds.toFixed(2)}) outside target range. Skipping this run.`);
+    return;
+  }
+
+  const message = formatTelegramMessage(validPicks);
   await sendTelegramMessage(message);
   console.log("✅ Picks sent to Telegram!");
 }
@@ -72,14 +69,14 @@ function formatTelegramMessage(validPicks) {
     timeStyle: "short",
   });
 
-  const totalOdds = picks
+  const totalOdds = validPicks
     .reduce((acc, p) => acc * parseFloat(p.odds), 1)
     .toFixed(2);
 
   let msg = `🎯 *AI BETTING PICKS* — ${now}\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-  picks.forEach((pick, i) => {
+  validPicks.forEach((pick) => {
     const sport = pick.sport === "basketball" ? "🏀" : "⚽";
     msg += `${sport} *${pick.match}*\n`;
     msg += `📌 Pick: *${pick.pick}*\n`;

@@ -7,15 +7,15 @@ const SYSTEM_PROMPT = `You are an expert sports betting analyst specializing in 
 Your job is to analyze match statistics and identify VALUE bets — situations where statistics strongly support an outcome, not just low-odds favorites.
 
 CRITICAL RULES:
-1. Return ONLY valid JSON, no extra text, no markdown, no code blocks
+1. Return ONLY a single JSON object. No text before it, no text after it, no markdown, no code blocks, no recalculations shown.
 2. Select 3-4 picks that form a combo with combined odds between 3.00 and 4.50
    - Each individual pick must have odds between 1.40 and 2.50
    - Never include a pick with odds below 1.40 — it kills combo balance
-   - Multiply the odds yourself to verify the combo lands in range before responding
+   - Do your math internally before responding — only output the final result
 3. Focus on STATISTICAL EDGES: strong form, H2H patterns, scoring trends
 4. Consider all market types: Over/Under goals, BTTS, 1X2, Asian handicap, basketball totals/spreads
 5. Avoid picks purely based on team reputation — base everything on data
-6. If you cannot find 3-4 strong value bets, return fewer (even 0) rather than forcing bad picks
+6. If you cannot find a valid combo, return the JSON with an empty picks array
 7. Keep reasons concise (1-2 sentences) but data-driven
 
 DATA QUALITY RULES — VERY IMPORTANT:
@@ -23,23 +23,11 @@ DATA QUALITY RULES — VERY IMPORTANT:
 - For basketball: only use a game if BOTH homeForm and awayForm have "played" >= 5
 - For football: only use a fixture if at least one team has form data with "played" >= 5
 - If a match has null/missing stats on both sides, SKIP IT ENTIRELY — do not guess or assume
-- If after filtering there are fewer than 3 usable matches total, return 0 picks and explain in analysis_note
+- If after filtering there are fewer than 3 usable matches total, return empty picks array
 - NEVER invent or estimate stats not in the data — only reason from what you are given
-- It is better to send NO picks than picks based on incomplete data
 
-Response format (return this exact JSON structure, nothing else, no markdown wrapping):
-{
-  "picks": [
-    {
-      "match": "Team A vs Team B",
-      "sport": "football",
-      "pick": "Over 2.5 Goals",
-      "odds": 1.75,
-      "reason": "Both teams scored in 8/10 recent games. H2H avg 3.2 goals over last 5 meetings."
-    }
-  ],
-  "analysis_note": "Brief overall note, or explanation of why no picks were made"
-}`;
+Your response must be exactly this structure and nothing else:
+{"picks":[{"match":"Team A vs Team B","sport":"football","pick":"Over 2.5 Goals","odds":1.75,"reason":"Reason here."}],"analysis_note":"Note here"}`;
 
 function preFilterMatches(matches) {
   return matches.filter((m) => {
@@ -57,26 +45,50 @@ function preFilterMatches(matches) {
 }
 
 function extractJSON(text) {
-  // Strategy 1: find outermost { } using index positions
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start !== -1 && end !== -1 && end > start) {
-    return text.slice(start, end + 1);
-  }
-
-  // Strategy 2: strip markdown and try again
+  // Remove markdown code blocks
   const stripped = text
     .replace(/```json\n?/gi, "")
     .replace(/```\n?/gi, "")
     .trim();
 
-  const start2 = stripped.indexOf("{");
-  const end2 = stripped.lastIndexOf("}");
-  if (start2 !== -1 && end2 !== -1 && end2 > start2) {
-    return stripped.slice(start2, end2 + 1);
+  // Split by lines and find all positions where a { starts a new JSON block
+  // Try parsing from each { found, take the last one that successfully parses
+  let lastValid = null;
+  let searchFrom = 0;
+
+  while (true) {
+    const start = stripped.indexOf("{", searchFrom);
+    if (start === -1) break;
+
+    // Find matching closing brace by counting depth
+    let depth = 0;
+    let end = -1;
+    for (let i = start; i < stripped.length; i++) {
+      if (stripped[i] === "{") depth++;
+      else if (stripped[i] === "}") {
+        depth--;
+        if (depth === 0) {
+          end = i;
+          break;
+        }
+      }
+    }
+
+    if (end === -1) break;
+
+    const candidate = stripped.slice(start, end + 1);
+    try {
+      const parsed = JSON.parse(candidate);
+      // Only accept if it has the expected structure
+      if (parsed.picks !== undefined) {
+        lastValid = candidate;
+      }
+    } catch (e) {}
+
+    searchFrom = start + 1;
   }
 
-  return text;
+  return lastValid || stripped;
 }
 
 async function analyzeWithClaude(matches) {
@@ -99,25 +111,21 @@ async function analyzeWithClaude(matches) {
 
   const matchData = JSON.stringify(usableMatches, null, 2);
 
-  const prompt = `Analyze these ${usableMatches.length} upcoming matches and select 3-4 value bets for a combo with combined odds between 3.00 and 4.50.
+  const prompt = `Analyze these ${usableMatches.length} upcoming matches and find 3-4 value bets with combined odds between 3.00 and 4.50.
 
-All matches below have already passed a data quality check, but still apply your judgment:
-- Only pick a match if the stats clearly support the outcome
-- Skip any match where the data feels thin or inconclusive
-- If you cannot build a confident 3-4 leg combo, return 0 picks
+STRICT OUTPUT RULES:
+- Output ONE JSON object only — no text before, no text after, no markdown
+- Do all your thinking internally — only output the final JSON result
+- Do NOT show recalculations or working — just the answer
+- If no valid combo exists, return {"picks":[],"analysis_note":"reason"}
 
-ODDS RULES — STRICTLY ENFORCE:
-- Each pick odds must be between 1.40 and 2.50
-- Before finalizing, multiply all pick odds together
-- If the product is below 3.00 or above 4.50, adjust by swapping a pick or changing the line
-- ONLY return picks when you have verified the combined odds land between 3.00 and 4.50
+ODDS RULES:
+- Each pick: odds between 1.40 and 2.50
+- Combined: multiply all odds, must land between 3.00 and 4.50
+- Verify internally before outputting
 
 Matches:
-${matchData}
-
-- Estimated odds based on typical bookmaker lines for these market types
-- Combined odds MUST land between 3.00 and 4.50 — verify by multiplying before responding
-- Return ONLY raw JSON, no markdown, no code blocks, no extra text`;
+${matchData}`;
 
   try {
     const response = await client.messages.create({
