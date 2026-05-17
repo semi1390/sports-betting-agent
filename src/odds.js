@@ -4,24 +4,22 @@ const axios = require("axios");
 const API_KEY = process.env.ODDS_API_KEY;
 const BASE_URL = "https://api.the-odds-api.com/v4/sports";
 
-// Map our league names to The Odds API sport keys
-const LEAGUE_MAP = {
-  // Football
-  "Premier League": "soccer_england_premier_league",
-  "La Liga": "soccer_spain_la_liga",
-  "Serie A": "soccer_italy_serie_a",
-  "Ligue 1": "soccer_france_ligue_one",
-  "Bundesliga": "soccer_germany_bundesliga",
-  "UEFA Champions League": "soccer_uefa_champs_league",
-  "UEFA Europa League": "soccer_uefa_europa_league",
-  "MLS": "soccer_usa_mls",
-  // Basketball
-  "NBA": "basketball_nba",
-  "ACB": "basketball_spain_acb",
-  "EuroLeague": "basketball_euroleague",
-};
+const FOOTBALL_LEAGUES = [
+  "soccer_italy_serie_a",
+  "soccer_spain_la_liga",
+  "soccer_france_ligue_one",
+  "soccer_germany_bundesliga",
+  "soccer_epl",
+  "soccer_usa_mls",
+  "soccer_uefa_champs_league",
+  "soccer_uefa_europa_league",
+];
 
-// Fetch all upcoming odds for a sport key
+const BASKETBALL_LEAGUES = [
+  "basketball_nba",
+  "basketball_euroleague",
+];
+
 async function fetchOddsForSport(sportKey) {
   const res = await axios.get(`${BASE_URL}/${sportKey}/odds`, {
     params: {
@@ -31,55 +29,53 @@ async function fetchOddsForSport(sportKey) {
       oddsFormat: "decimal",
     },
   });
-  console.log(`📊 Odds requests remaining: ${res.headers["x-requests-remaining"]}`);
+  console.log(`📊 ${sportKey}: ${res.data.length} games | requests left: ${res.headers["x-requests-remaining"]}`);
   return res.data || [];
 }
 
-// Normalize team name for fuzzy matching
 function normalize(name) {
   return name
     .toLowerCase()
-    .replace(/\s+(fc|sc|cf|ac|bc|bk|sk|fk|1\.|sv|vv|if|afc|bfc)$/g, "")
+    .replace(/\bfc\b|\bsc\b|\bcf\b|\bac\b|\bbc\b|\bbk\b|\bsk\b|\bfk\b|\bsv\b|\bvv\b|\bif\b|\bafc\b|\bbfc\b|\bbc\b/g, "")
     .replace(/[^a-z0-9]/g, "")
     .trim();
 }
 
-// Find best odds match for a given match
+function teamsMatch(name1, name2) {
+  const n1 = normalize(name1);
+  const n2 = normalize(name2);
+  return n1 === n2 || n1.includes(n2) || n2.includes(n1);
+}
+
 function findOddsForMatch(match, oddsGames) {
   const [homeName, awayName] = match.match.split(" vs ");
-  const normHome = normalize(homeName);
-  const normAway = normalize(awayName);
 
   for (const game of oddsGames) {
-    const normOddsHome = normalize(game.home_team);
-    const normOddsAway = normalize(game.away_team);
+    const homeMatch = teamsMatch(homeName, game.home_team);
+    const awayMatch = teamsMatch(awayName, game.away_team);
+    if (homeMatch && awayMatch) return extractOdds(game);
 
-    const homeMatch = normOddsHome.includes(normHome) || normHome.includes(normOddsHome);
-    const awayMatch = normOddsAway.includes(normAway) || normAway.includes(normOddsAway);
-
-    if (homeMatch && awayMatch) {
-      return extractOdds(game);
-    }
+    const homeMatch2 = teamsMatch(homeName, game.away_team);
+    const awayMatch2 = teamsMatch(awayName, game.home_team);
+    if (homeMatch2 && awayMatch2) return extractOdds(game);
   }
   return null;
 }
 
-// Extract useful odds from a game object
 function extractOdds(game) {
   const result = {
     homeWin: null,
     draw: null,
     awayWin: null,
-    over25: null,
-    under25: null,
-    over35: null,
-    under35: null,
+    over15: null, under15: null,
+    over25: null, under25: null,
+    over35: null, under35: null,
+    overPoints: null, underPoints: null,
     bookmaker: null,
   };
 
   if (!game.bookmakers || game.bookmakers.length === 0) return result;
 
-  // Pick first available bookmaker
   const bookmaker = game.bookmakers[0];
   result.bookmaker = bookmaker.title;
 
@@ -94,10 +90,20 @@ function extractOdds(game) {
 
     if (market.key === "totals") {
       market.outcomes.forEach((o) => {
-        if (o.point === 2.5 && o.name === "Over") result.over25 = o.price;
-        if (o.point === 2.5 && o.name === "Under") result.under25 = o.price;
-        if (o.point === 3.5 && o.name === "Over") result.over35 = o.price;
-        if (o.point === 3.5 && o.name === "Under") result.under35 = o.price;
+        const p = o.point;
+        const name = o.name;
+
+        // Football totals (goals)
+        if (p === 1.5 && name === "Over") result.over15 = o.price;
+        if (p === 1.5 && name === "Under") result.under15 = o.price;
+        if (p >= 2.0 && p <= 3.0 && name === "Over") result.over25 = o.price;
+        if (p >= 2.0 && p <= 3.0 && name === "Under") result.under25 = o.price;
+        if (p >= 3.0 && p <= 4.0 && name === "Over") result.over35 = o.price;
+        if (p >= 3.0 && p <= 4.0 && name === "Under") result.under35 = o.price;
+
+        // Basketball totals (points 150-280)
+        if (p >= 150 && name === "Over") result.overPoints = o.price;
+        if (p >= 150 && name === "Under") result.underPoints = o.price;
       });
     }
   });
@@ -105,89 +111,94 @@ function extractOdds(game) {
   return result;
 }
 
-// Main function — enrich picks with real odds
+function matchPickToOdds(pickText, odds) {
+  const p = pickText.toLowerCase();
+
+  // Basketball points totals (Over 218.5, Under 225 etc)
+  if (p.includes("over") && /\d{3}/.test(p)) return odds.overPoints;
+  if (p.includes("under") && /\d{3}/.test(p)) return odds.underPoints;
+  if (p.includes("over") && p.includes("point")) return odds.overPoints;
+  if (p.includes("under") && p.includes("point")) return odds.underPoints;
+
+  // Football totals
+  if (p.includes("over 1.5") || p.includes("over1.5")) return odds.over15;
+  if (p.includes("under 1.5") || p.includes("under1.5")) return odds.under15;
+  if (p.includes("over 2") || p.includes("over2")) return odds.over25;
+  if (p.includes("under 2") || p.includes("under2")) return odds.under25;
+  if (p.includes("over 3") || p.includes("over3")) return odds.over35;
+  if (p.includes("under 3") || p.includes("under3")) return odds.under35;
+
+  // BTTS
+  if ((p.includes("btts") || p.includes("both teams to score")) && p.includes("no")) return odds.under15;
+  if (p.includes("btts") || p.includes("both teams to score")) return odds.over15;
+
+  // 1X2
+  if (p.includes("draw")) return odds.draw;
+  if (p.includes("or draw")) return odds.homeWin;
+  if (p.includes("away win") || p.includes("away to win")) return odds.awayWin;
+  if (p.includes("home win") || p.includes("home to win")) return odds.homeWin;
+  if (p.includes("to win") || p.includes(" win")) return odds.homeWin;
+
+  // Handicap
+  if (p.includes("-") || p.includes("+") || p.includes("handicap") || p.includes("ah")) {
+    return p.includes("away") ? odds.awayWin : odds.homeWin;
+  }
+
+  return null;
+}
+
 async function enrichPicksWithRealOdds(picks) {
   if (!API_KEY) {
     console.log("⚠️ ODDS_API_KEY not set — skipping odds enrichment");
     return picks;
   }
 
-  // Get unique leagues from picks
-  const leagueKeys = [...new Set(
-    picks.map(p => {
-      const match = Object.entries(LEAGUE_MAP).find(([league]) =>
-        p.match.includes(league) || p.league === league
-      );
-      return match ? match[1] : null;
-    }).filter(Boolean)
-  )];
-
-  // Also add sport-based keys
-  picks.forEach(p => {
-    if (p.sport === "basketball" && !leagueKeys.includes("basketball_nba")) {
-      leagueKeys.push("basketball_nba");
-      leagueKeys.push("basketball_euroleague");
-    }
-    if (p.sport === "football") {
-      // Add all football leagues since we don't know which one
-      ["soccer_spain_la_liga", "soccer_germany_bundesliga",
-       "soccer_england_premier_league", "soccer_italy_serie_a",
-       "soccer_france_ligue_one"].forEach(k => {
-        if (!leagueKeys.includes(k)) leagueKeys.push(k);
-      });
-    }
-  });
-
-  // Fetch odds for all relevant sports
   const allOddsGames = [];
-  for (const key of leagueKeys) {
-    try {
-      const games = await fetchOddsForSport(key);
-      allOddsGames.push(...games);
-    } catch (err) {
-      console.log(`⚠️ Could not fetch odds for ${key}`);
+  const footballPicks = picks.filter(p => p.sport === "football");
+  const basketballPicks = picks.filter(p => p.sport === "basketball");
+
+  if (footballPicks.length > 0) {
+    for (const key of FOOTBALL_LEAGUES) {
+      try {
+        const games = await fetchOddsForSport(key);
+        allOddsGames.push(...games);
+      } catch (err) {
+        console.log(`⚠️ Could not fetch odds for ${key}`);
+      }
     }
   }
 
-  console.log(`🎲 Fetched odds for ${allOddsGames.length} games total`);
+  if (basketballPicks.length > 0) {
+    for (const key of BASKETBALL_LEAGUES) {
+      try {
+        const games = await fetchOddsForSport(key);
+        allOddsGames.push(...games);
+      } catch (err) {
+        console.log(`⚠️ Could not fetch odds for ${key}`);
+      }
+    }
+  }
 
-  // Match picks to real odds
+  console.log(`🎲 Fetched real odds for ${allOddsGames.length} games total`);
+
   return picks.map((pick) => {
     const realOdds = findOddsForMatch(pick, allOddsGames);
 
     if (!realOdds) {
-      console.log(`⚠️ No real odds found for: ${pick.match}`);
-      return { ...pick, realOdds: null };
+      console.log(`⚠️ No real odds found for: ${pick.match} — keeping Claude estimate`);
+      return pick;
     }
 
-    // Find the real odd that matches the pick type
     const matchedOdds = matchPickToOdds(pick.pick, realOdds);
 
     if (matchedOdds) {
       console.log(`✅ ${pick.match}: Claude=${pick.odds} → Real=${matchedOdds} (${realOdds.bookmaker})`);
-      return { ...pick, odds: matchedOdds, realOdds };
+      return { ...pick, odds: matchedOdds };
     }
 
-    console.log(`⚠️ Could not match pick type "${pick.pick}" to real odds for ${pick.match}`);
-    return { ...pick, realOdds };
+    console.log(`⚠️ Pick type "${pick.pick}" not matched — keeping Claude estimate`);
+    return pick;
   });
-}
-
-// Match a pick description to the right odds value
-function matchPickToOdds(pickText, odds) {
-  const p = pickText.toLowerCase();
-
-  if (p.includes("home win") || p.includes("to win") && !p.includes("away")) return odds.homeWin;
-  if (p.includes("away win") || p.includes("away") && p.includes("win")) return odds.awayWin;
-  if (p.includes("draw")) return odds.draw;
-  if (p.includes("or draw") && p.includes("home")) return odds.homeWin && odds.draw
-    ? parseFloat(Math.max(odds.homeWin, odds.draw).toFixed(2)) : null;
-  if (p.includes("over 2.5")) return odds.over25;
-  if (p.includes("under 2.5")) return odds.under25;
-  if (p.includes("over 3.5")) return odds.over35;
-  if (p.includes("under 3.5")) return odds.under35;
-
-  return null;
 }
 
 module.exports = { enrichPicksWithRealOdds };
