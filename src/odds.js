@@ -30,7 +30,8 @@ async function fetchOddsForSport(sportKey) {
     },
   });
   console.log(`📊 ${sportKey}: ${res.data.length} games | requests left: ${res.headers["x-requests-remaining"]}`);
-  return res.data || [];
+  // Tag each game with its sport key
+  return (res.data || []).map(g => ({ ...g, sport_key: sportKey }));
 }
 
 function normalize(name) {
@@ -44,13 +45,31 @@ function normalize(name) {
 function teamsMatch(name1, name2) {
   const n1 = normalize(name1);
   const n2 = normalize(name2);
-  return n1 === n2 || n1.includes(n2) || n2.includes(n1);
+
+  // Exact match
+  if (n1 === n2) return true;
+
+  // Only do partial match if the shorter name is at least 5 chars
+  // prevents "Roma" matching "AS Roma FC Basketball" etc
+  const shorter = n1.length < n2.length ? n1 : n2;
+  const longer = n1.length < n2.length ? n2 : n1;
+
+  if (shorter.length >= 5 && longer.includes(shorter)) return true;
+
+  return false;
 }
 
 function findOddsForMatch(match, oddsGames) {
   const [homeName, awayName] = match.match.split(" vs ");
 
-  for (const game of oddsGames) {
+  // Filter games by sport type to avoid cross-sport matches
+  const sportGames = oddsGames.filter(g => {
+    if (match.sport === "basketball") return g.sport_key?.includes("basketball");
+    if (match.sport === "football") return !g.sport_key?.includes("basketball");
+    return true;
+  });
+
+  for (const game of sportGames) {
     const homeMatch = teamsMatch(homeName, game.home_team);
     const awayMatch = teamsMatch(awayName, game.away_team);
     if (homeMatch && awayMatch) return extractOdds(game);
@@ -115,8 +134,8 @@ function matchPickToOdds(pickText, odds) {
   const p = pickText.toLowerCase();
 
   // Basketball points totals (Over 218.5, Under 225 etc)
-  if (p.includes("over") && /\d{3}/.test(p)) return odds.overPoints;
-  if (p.includes("under") && /\d{3}/.test(p)) return odds.underPoints;
+  if (p.includes("over") && /\d{3}(\.\d)?/.test(p)) return odds.overPoints;
+  if (p.includes("under") && /\d{3}(\.\d)?/.test(p)) return odds.underPoints;
   if (p.includes("over") && p.includes("point")) return odds.overPoints;
   if (p.includes("under") && p.includes("point")) return odds.underPoints;
 
@@ -180,6 +199,7 @@ async function enrichPicksWithRealOdds(picks) {
   }
 
   console.log(`🎲 Fetched real odds for ${allOddsGames.length} games total`);
+ 
 
   return picks.map((pick) => {
     const realOdds = findOddsForMatch(pick, allOddsGames);
